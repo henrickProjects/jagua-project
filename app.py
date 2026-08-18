@@ -8,7 +8,6 @@ from openpyxl import load_workbook
 import shutil
 
 app = Flask(__name__)
-# AQUI ESTÁ A MÁGICA: Permitimos que o site (InfinityFree) leia o nome do arquivo enviado!
 CORS(app, expose_headers=["Content-Disposition"])
 
 # ================= CONFIGURAÇÕES =================
@@ -24,10 +23,16 @@ def consultar_cnpj(cnpj):
     try:
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
-            return response.json()
+            return response.json(), None
+        # Códigos 401, 402, 403 e 429 geralmente indicam limite de requisições ou falta de pagamento/créditos
+        elif response.status_code in [401, 402, 403, 429]:
+            return None, "creditos"
+        else:
+            print(f"Erro na API. Código: {response.status_code}")
+            return None, "servidor"
     except Exception as e:
-        print(f"Erro na API: {e}")
-    return None
+        print(f"Erro na conexão com API: {e}")
+        return None, "servidor"
 
 def formatar_cnpj(cnpj_string):
     cnpj = re.sub(r'\D', '', str(cnpj_string)).zfill(14)
@@ -44,8 +49,10 @@ def formatar_data(data_string):
     return data_string
 
 def gerar_excel(cnpj_limpo, pasta_destino, nome_rep="", codigo_rep=""):
-    dados = consultar_cnpj(cnpj_limpo)
-    if not dados: return None
+    dados, erro_api = consultar_cnpj(cnpj_limpo)
+    
+    if erro_api: 
+        return None, erro_api
 
     empresa = dados.get('company', {})
     razao_social = empresa.get('name', '')
@@ -118,14 +125,13 @@ def gerar_excel(cnpj_limpo, pasta_destino, nome_rep="", codigo_rep=""):
         if not nome_arquivo_seguro:
             nome_arquivo_seguro = f"Sem_Nome_{cnpj_limpo}"
 
-        # AQUI GARANTIMOS O SUFIXO _cadastro
         caminho_salvamento = os.path.join(pasta_destino, f"{nome_arquivo_seguro}_cadastro.xlsx")
         wb.save(caminho_salvamento)
         
-        return caminho_salvamento
+        return caminho_salvamento, None
     except Exception as e:
         print(f"Erro ao manipular o Excel: {e}")
-        return None
+        return None, "servidor"
 
 # ================= ROTAS DA API =================
 
@@ -136,12 +142,17 @@ def rota_unico():
     nome_rep = dados.get('nome_representante', '')
     codigo_rep = dados.get('codigo_representante', '')
     
-    caminho_arquivo = gerar_excel(cnpj_limpo, "./temp", nome_rep, codigo_rep)
+    caminho_arquivo, erro = gerar_excel(cnpj_limpo, "./temp", nome_rep, codigo_rep)
     
-    if caminho_arquivo and os.path.exists(caminho_arquivo):
+    if erro == "creditos":
+        return jsonify({"erro": "creditos"}), 400
+    elif erro == "servidor" or not caminho_arquivo:
+        return jsonify({"erro": "servidor"}), 500
+        
+    if os.path.exists(caminho_arquivo):
         return send_file(caminho_arquivo, as_attachment=True, download_name=os.path.basename(caminho_arquivo))
     else:
-        return jsonify({"erro": "CNPJ não encontrado ou erro ao gerar planilha."}), 500
+        return jsonify({"erro": "servidor"}), 500
 
 
 @app.route('/gerar_multiplos', methods=['POST'])
@@ -155,7 +166,16 @@ def rota_multiplos():
     os.makedirs(pasta_lote, exist_ok=True)
     
     for cnpj in lista_cnpjs:
-        gerar_excel(cnpj, pasta_lote, nome_rep, codigo_rep)
+        caminho_arquivo, erro = gerar_excel(cnpj, pasta_lote, nome_rep, codigo_rep)
+        
+        if erro == "creditos":
+            # Se bater o limite de créditos no meio do lote, cancela tudo e avisa
+            return jsonify({"erro": "creditos"}), 400
+        elif erro == "servidor":
+            # Aqui você pode escolher se ele cancela tudo ou só pula o CNPJ problemático.
+            # No momento, deixei pra cancelar pra evitar planilhas incompletas.
+            return jsonify({"erro": "servidor"}), 500
+            
         time.sleep(0.5) 
         
     caminho_zip_base = f"./temp/cadastros_lote"
