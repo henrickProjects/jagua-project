@@ -15,7 +15,6 @@ API_KEY = "f61400a5-9a97-4977-82f3-a51caa95fdd6-8db001f6-e2a1-4341-b284-ee519261
 ARQUIVO_MODELO = "SUPERMERCADO PONTO CERTO_CADASTRO (1).xlsx"
 # =================================================
 
-# Cria a pasta temporária assim que o servidor liga
 os.makedirs("./temp", exist_ok=True)
 
 def consultar_cnpj(cnpj):
@@ -43,11 +42,9 @@ def formatar_data(data_string):
     if len(partes) == 3: return f"{partes[2]}/{partes[1]}/{partes[0]}"
     return data_string
 
-def gerar_excel(cnpj_limpo, pasta_destino):
+def gerar_excel(cnpj_limpo, pasta_destino, nome_rep="", codigo_rep=""):
     dados = consultar_cnpj(cnpj_limpo)
-    
-    if not dados:
-        return None
+    if not dados: return None
 
     empresa = dados.get('company', {})
     razao_social = empresa.get('name', '')
@@ -82,7 +79,8 @@ def gerar_excel(cnpj_limpo, pasta_destino):
         wb = load_workbook(ARQUIVO_MODELO)
         ws = wb.active
 
-        celulas_limpar = ['H7', 'M8', 'H8', 'H9', 'M9', 'H10', 'M10', 'H11', 'M11', 'P11', 'H12', 'H13', 'M13']
+        # Limpeza das células (agora incluindo H15 e M15)
+        celulas_limpar = ['H7', 'M8', 'H8', 'H9', 'M9', 'H10', 'M10', 'H11', 'M11', 'P11', 'H12', 'H13', 'M13', 'H15', 'M15']
         for celula in celulas_limpar:
             ws[celula] = None
 
@@ -90,6 +88,7 @@ def gerar_excel(cnpj_limpo, pasta_destino):
             ws[f'C{row}'] = None
             ws[f'J{row}'] = None
 
+        # Inserção dos dados do cliente
         ws['H7'] = razao_social
         ws['M8'] = data_fundacao
         ws['H8'] = nome_fantasia
@@ -104,6 +103,12 @@ def gerar_excel(cnpj_limpo, pasta_destino):
         ws['H13'] = email
         ws['M13'] = email
 
+        # Inserção dos dados do Representante
+        if nome_rep:
+            ws['H15'] = nome_rep
+        if codigo_rep:
+            ws['M15'] = codigo_rep
+
         linha_socio = 20
         for socio in membros[:5]:
             pessoa = socio.get('person', {})
@@ -112,7 +117,10 @@ def gerar_excel(cnpj_limpo, pasta_destino):
             linha_socio += 1
 
         nome_arquivo_seguro = re.sub(r'[\\/*?:"<>|]', "", str(nome_fantasia)).strip()
-        caminho_salvamento = os.path.join(pasta_destino, f"{nome_arquivo_seguro}_{cnpj_limpo}.xlsx")
+        if not nome_arquivo_seguro:
+            nome_arquivo_seguro = f"Sem_Nome_{cnpj_limpo}"
+
+        caminho_salvamento = os.path.join(pasta_destino, f"{nome_arquivo_seguro}.xlsx")
         wb.save(caminho_salvamento)
         
         return caminho_salvamento
@@ -126,12 +134,12 @@ def gerar_excel(cnpj_limpo, pasta_destino):
 def rota_unico():
     dados = request.json
     cnpj_limpo = dados.get('cnpj')
+    nome_rep = dados.get('nome_representante', '')
+    codigo_rep = dados.get('codigo_representante', '')
     
-    # Processa e gera o arquivo
-    caminho_arquivo = gerar_excel(cnpj_limpo, "./temp")
+    caminho_arquivo = gerar_excel(cnpj_limpo, "./temp", nome_rep, codigo_rep)
     
     if caminho_arquivo and os.path.exists(caminho_arquivo):
-        # Manda o arquivo pronto de volta pro site baixar!
         return send_file(caminho_arquivo, as_attachment=True, download_name=os.path.basename(caminho_arquivo))
     else:
         return jsonify({"erro": "CNPJ não encontrado ou erro ao gerar planilha."}), 500
@@ -141,19 +149,17 @@ def rota_unico():
 def rota_multiplos():
     dados = request.json
     lista_cnpjs = dados.get('cnpjs', [])
+    nome_rep = dados.get('nome_representante', '')
+    codigo_rep = dados.get('codigo_representante', '')
     
-    # Cria uma pasta única para esse lote
     pasta_lote = f"./temp/lote_{int(time.time())}"
     os.makedirs(pasta_lote, exist_ok=True)
     
-    # Roda todos os CNPJs
     for cnpj in lista_cnpjs:
-        gerar_excel(cnpj, pasta_lote)
-        time.sleep(0.5) # Pausa pequena pra API da cnpja não bloquear por spam
+        gerar_excel(cnpj, pasta_lote, nome_rep, codigo_rep)
+        time.sleep(0.5) 
         
-    # Zipa a pasta inteira
     caminho_zip_base = f"./temp/cadastros_lote"
     shutil.make_archive(caminho_zip_base, 'zip', pasta_lote)
     
-    # Envia o ZIP pro site
     return send_file(f"{caminho_zip_base}.zip", as_attachment=True, download_name='cadastros_multiplos.zip')
