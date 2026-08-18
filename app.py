@@ -8,7 +8,8 @@ from openpyxl import load_workbook
 import shutil
 
 app = Flask(__name__)
-CORS(app)
+# AQUI ESTÁ A MÁGICA: Permitimos que o site (InfinityFree) leia o nome do arquivo enviado!
+CORS(app, expose_headers=["Content-Disposition"])
 
 # ================= CONFIGURAÇÕES =================
 API_KEY = "f61400a5-9a97-4977-82f3-a51caa95fdd6-8db001f6-e2a1-4341-b284-ee51926156ed"
@@ -79,7 +80,6 @@ def gerar_excel(cnpj_limpo, pasta_destino, nome_rep="", codigo_rep=""):
         wb = load_workbook(ARQUIVO_MODELO)
         ws = wb.active
 
-        # Limpeza das células (agora incluindo H15 e M15)
         celulas_limpar = ['H7', 'M8', 'H8', 'H9', 'M9', 'H10', 'M10', 'H11', 'M11', 'P11', 'H12', 'H13', 'M13', 'H15', 'M15']
         for celula in celulas_limpar:
             ws[celula] = None
@@ -88,7 +88,6 @@ def gerar_excel(cnpj_limpo, pasta_destino, nome_rep="", codigo_rep=""):
             ws[f'C{row}'] = None
             ws[f'J{row}'] = None
 
-        # Inserção dos dados do cliente
         ws['H7'] = razao_social
         ws['M8'] = data_fundacao
         ws['H8'] = nome_fantasia
@@ -103,7 +102,6 @@ def gerar_excel(cnpj_limpo, pasta_destino, nome_rep="", codigo_rep=""):
         ws['H13'] = email
         ws['M13'] = email
 
-        # Inserção dos dados do Representante
         if nome_rep:
             ws['H15'] = nome_rep
         if codigo_rep:
@@ -120,7 +118,8 @@ def gerar_excel(cnpj_limpo, pasta_destino, nome_rep="", codigo_rep=""):
         if not nome_arquivo_seguro:
             nome_arquivo_seguro = f"Sem_Nome_{cnpj_limpo}"
 
-        caminho_salvamento = os.path.join(pasta_destino, f"{nome_arquivo_seguro}.xlsx")
+        # AQUI GARANTIMOS O SUFIXO _cadastro
+        caminho_salvamento = os.path.join(pasta_destino, f"{nome_arquivo_seguro}_cadastro.xlsx")
         wb.save(caminho_salvamento)
         
         return caminho_salvamento
