@@ -1,45 +1,159 @@
 from flask import Flask, request, send_file, jsonify
-from flask_cors import CORS # Permite que o site na InfinityFree conecte aqui
+from flask_cors import CORS
 import os
+import time
+import re
+import requests
+from openpyxl import load_workbook
 import shutil
-# Importe suas outras bibliotecas (requests, openpyxl, re...)
 
 app = Flask(__name__)
-# Libera o acesso para qualquer site chamar a sua API
-CORS(app) 
+CORS(app)
 
-# Coloque suas funções antigas aqui (consultar_cnpj, formatar, preencher excel...)
-# ...
+# ================= CONFIGURAÇÕES =================
+API_KEY = "f61400a5-9a97-4977-82f3-a51caa95fdd6-8db001f6-e2a1-4341-b284-ee51926156ed"
+ARQUIVO_MODELO = "SUPERMERCADO PONTO CERTO_CADASTRO (1).xlsx"
+# =================================================
+
+# Cria a pasta temporária assim que o servidor liga
+os.makedirs("./temp", exist_ok=True)
+
+def consultar_cnpj(cnpj):
+    url = f"https://api.cnpja.com/office/{cnpj}?registrations=PR"
+    headers = {"Authorization": API_KEY}
+    try:
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            return response.json()
+    except Exception as e:
+        print(f"Erro na API: {e}")
+    return None
+
+def formatar_cnpj(cnpj_string):
+    cnpj = re.sub(r'\D', '', str(cnpj_string)).zfill(14)
+    return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:]}"
+
+def formatar_cep(cep_string):
+    cep = re.sub(r'\D', '', str(cep_string)).zfill(8)
+    return f"{cep[:2]}.{cep[2:5]}-{cep[5:]}"
+
+def formatar_data(data_string):
+    if not data_string: return ""
+    partes = str(data_string).split('-')
+    if len(partes) == 3: return f"{partes[2]}/{partes[1]}/{partes[0]}"
+    return data_string
+
+def gerar_excel(cnpj_limpo, pasta_destino):
+    dados = consultar_cnpj(cnpj_limpo)
+    
+    if not dados:
+        return None
+
+    empresa = dados.get('company', {})
+    razao_social = empresa.get('name', '')
+    nome_fantasia = dados.get('alias') or razao_social
+    data_fundacao = formatar_data(dados.get('founded', ''))
+
+    inscricoes = dados.get('registrations', [])
+    inscricao_estadual = ""
+    for ie in inscricoes:
+        if ie.get('state') == 'PR' and ie.get('enabled'):
+            inscricao_estadual = ie.get('number', '')
+            break
+
+    endereco = dados.get('address', {})
+    rua = endereco.get('street', '')
+    numero = endereco.get('number', '')
+    bairro = endereco.get('district', '')
+    cep = formatar_cep(endereco.get('zip', ''))
+    cidade = endereco.get('city', '')
+    estado = endereco.get('state', '')
+    endereco_completo = f"{rua}, {numero}"
+
+    emails = dados.get('emails', [])
+    email = emails[0].get('address', '') if emails else ''
+
+    telefones = dados.get('phones', [])
+    telefone = f"({telefones[0].get('area')}) {telefones[0].get('number')}" if telefones else ''
+
+    membros = empresa.get('members', [])
+
+    try:
+        wb = load_workbook(ARQUIVO_MODELO)
+        ws = wb.active
+
+        celulas_limpar = ['H7', 'M8', 'H8', 'H9', 'M9', 'H10', 'M10', 'H11', 'M11', 'P11', 'H12', 'H13', 'M13']
+        for celula in celulas_limpar:
+            ws[celula] = None
+
+        for row in range(20, 25):
+            ws[f'C{row}'] = None
+            ws[f'J{row}'] = None
+
+        ws['H7'] = razao_social
+        ws['M8'] = data_fundacao
+        ws['H8'] = nome_fantasia
+        ws['H9'] = formatar_cnpj(cnpj_limpo)
+        ws['M9'] = inscricao_estadual
+        ws['H10'] = endereco_completo
+        ws['M10'] = cep
+        ws['H11'] = bairro
+        ws['M11'] = cidade
+        ws['P11'] = estado
+        ws['H12'] = telefone
+        ws['H13'] = email
+        ws['M13'] = email
+
+        linha_socio = 20
+        for socio in membros[:5]:
+            pessoa = socio.get('person', {})
+            ws[f'C{linha_socio}'] = pessoa.get('name', '')
+            ws[f'J{linha_socio}'] = pessoa.get('taxId', '')
+            linha_socio += 1
+
+        nome_arquivo_seguro = re.sub(r'[\\/*?:"<>|]', "", str(nome_fantasia)).strip()
+        caminho_salvamento = os.path.join(pasta_destino, f"{nome_arquivo_seguro}_{cnpj_limpo}.xlsx")
+        wb.save(caminho_salvamento)
+        
+        return caminho_salvamento
+    except Exception as e:
+        print(f"Erro ao manipular o Excel: {e}")
+        return None
+
+# ================= ROTAS DA API =================
 
 @app.route('/gerar_unico', methods=['POST'])
 def rota_unico():
     dados = request.json
     cnpj_limpo = dados.get('cnpj')
     
-    # --- AQUI VAI SUA LÓGICA ---
-    # 1. Consulta a API da cnpja
-    # 2. Carrega o openpyxl e edita o modelo
-    # 3. Salva com o nome do cliente em uma pasta temporária
-    caminho_arquivo_gerado = f"./temp/{cnpj_limpo}.xlsx" 
+    # Processa e gera o arquivo
+    caminho_arquivo = gerar_excel(cnpj_limpo, "./temp")
     
-    # Envia o arquivo de volta para o site baixar
-    return send_file(caminho_arquivo_gerado, as_attachment=True, download_name='cadastro.xlsx')
+    if caminho_arquivo and os.path.exists(caminho_arquivo):
+        # Manda o arquivo pronto de volta pro site baixar!
+        return send_file(caminho_arquivo, as_attachment=True, download_name=os.path.basename(caminho_arquivo))
+    else:
+        return jsonify({"erro": "CNPJ não encontrado ou erro ao gerar planilha."}), 500
+
 
 @app.route('/gerar_multiplos', methods=['POST'])
 def rota_multiplos():
     dados = request.json
     lista_cnpjs = dados.get('cnpjs', [])
     
-    # --- AQUI VAI SUA LÓGICA ---
-    # 1. Faz um loop for pela lista_cnpjs
-    # 2. Gera todos os Excel dentro de uma pasta temporária
-    # 3. Zipa a pasta inteira usando o shutil.make_archive
-    caminho_zip = f"./temp/cadastros.zip"
+    # Cria uma pasta única para esse lote
+    pasta_lote = f"./temp/lote_{int(time.time())}"
+    os.makedirs(pasta_lote, exist_ok=True)
     
-    # Envia o ZIP de volta para o site
-    return send_file(caminho_zip, as_attachment=True, download_name='cadastros.zip')
-
-if __name__ == '__main__':
-    # Cria pastas temporárias
-    os.makedirs("./temp", exist_ok=True)
-    app.run(host='0.0.0.0', port=5000)
+    # Roda todos os CNPJs
+    for cnpj in lista_cnpjs:
+        gerar_excel(cnpj, pasta_lote)
+        time.sleep(0.5) # Pausa pequena pra API da cnpja não bloquear por spam
+        
+    # Zipa a pasta inteira
+    caminho_zip_base = f"./temp/cadastros_lote"
+    shutil.make_archive(caminho_zip_base, 'zip', pasta_lote)
+    
+    # Envia o ZIP pro site
+    return send_file(f"{caminho_zip_base}.zip", as_attachment=True, download_name='cadastros_multiplos.zip')
