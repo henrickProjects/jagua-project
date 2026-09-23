@@ -6,12 +6,16 @@ import re
 import requests
 from openpyxl import load_workbook
 import shutil
+from dotenv import load_dotenv
+
+load_dotenv() # Carrega as variáveis do arquivo .env localmente
 
 app = Flask(__name__)
 CORS(app, expose_headers=["Content-Disposition"])
 
 # ================= CONFIGURAÇÕES =================
-API_KEY = "5f081987-daa5-4a3f-acda-de323cd1ddeb-151e5d50-ff41-47ad-91c5-98f09f27aafc"
+# A chave agora não fica exposta no código. Configure no painel do Render!
+API_KEY = os.environ.get("API_KEY")
 ARQUIVO_MODELO = "SUPERMERCADO PONTO CERTO_CADASTRO (1).xlsx"
 # =================================================
 
@@ -24,7 +28,6 @@ def consultar_cnpj(cnpj):
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             return response.json(), None
-        # Códigos 401, 402, 403 e 429 geralmente indicam limite de requisições ou falta de pagamento/créditos
         elif response.status_code in [401, 402, 403, 429]:
             return None, "creditos"
         else:
@@ -133,8 +136,6 @@ def gerar_excel(cnpj_limpo, pasta_destino, nome_rep="", codigo_rep=""):
         print(f"Erro ao manipular o Excel: {e}")
         return None, "servidor"
 
-# ================= ROTAS DA API =================
-
 @app.route('/gerar_unico', methods=['POST'])
 def rota_unico():
     dados = request.json
@@ -154,7 +155,6 @@ def rota_unico():
     else:
         return jsonify({"erro": "servidor"}), 500
 
-
 @app.route('/gerar_multiplos', methods=['POST'])
 def rota_multiplos():
     dados = request.json
@@ -167,18 +167,16 @@ def rota_multiplos():
     
     for cnpj in lista_cnpjs:
         caminho_arquivo, erro = gerar_excel(cnpj, pasta_lote, nome_rep, codigo_rep)
-        
         if erro == "creditos":
-            # Se bater o limite de créditos no meio do lote, cancela tudo e avisa
             return jsonify({"erro": "creditos"}), 400
         elif erro == "servidor":
-            # Aqui você pode escolher se ele cancela tudo ou só pula o CNPJ problemático.
-            # No momento, deixei pra cancelar pra evitar planilhas incompletas.
             return jsonify({"erro": "servidor"}), 500
-            
         time.sleep(0.5) 
         
     caminho_zip_base = f"./temp/cadastros_lote"
     shutil.make_archive(caminho_zip_base, 'zip', pasta_lote)
     
     return send_file(f"{caminho_zip_base}.zip", as_attachment=True, download_name='cadastros_multiplos.zip')
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000)
