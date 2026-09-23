@@ -11,7 +11,7 @@ app = Flask(__name__)
 CORS(app, expose_headers=["Content-Disposition"])
 
 # ================= CONFIGURAÇÕES =================
-API_KEY = "dd654976-dd11-47cf-a253-5601a35d52a6-e5193fa0-3304-4121-97a1-9a8aa02cd2c4"
+API_KEY = "5f081987-daa5-4a3f-acda-de323cd1ddeb-151e5d50-ff41-47ad-91c5-98f09f27aafc"
 ARQUIVO_MODELO = "SUPERMERCADO PONTO CERTO_CADASTRO (1).xlsx"
 # =================================================
 
